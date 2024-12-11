@@ -43,6 +43,17 @@ IPAddress subnet(255,255,255,0);
 
 WebServer server(80);
 
+
+bool stopCar = false;
+// varibles ping sensor ground
+long PingDurationGround;
+int ground;
+
+// varibles ping sensor front
+long PingDurationFront;
+int front; 
+
+
 /* 
 MOTOR LAYOUT
 LEFT <--> RIGHT
@@ -93,19 +104,28 @@ void setup() {
   pinMode(REED, INPUT);
 
   // wifi
-  WiFi.softAP(ssid, password);
-  WiFi.softAPConfig(local_ip, gateway, subnet);
-  delay(100);
+  // Initialize WiFi
+  int retryCount = 0;
+    while (!WiFi.softAP(ssid, password) && retryCount < 5) {
+    Serial.println("Retrying Wi-Fi setup...");
+    delay(1000);
+    retryCount++;
+  }
+  if (retryCount == 5) {
+    Serial.println("Wi-Fi setup failed. Restarting...");
+    ESP.restart();
+  }
+
+  // Web Server Setup
+  server.on("/", handleRoot);       // Route for the web interface
+  server.on("/stop", handleStopCar); // Route to stop the car
+  server.on("/resume", []() {       // Route to restart the car
+  stopCar = false;
+  server.send(200, "text/plain", "Car Resumed");
+  });
+  server.begin();
+  Serial.println("HTTP server started");
 }
-
-// varibles ping sensor ground
-long PingDurationGround;
-int ground;
-
-// caribles ping sensor front
-long PingDurationFront;
-int front; 
-
 
 void loop() {
   server.handleClient(); // Handle web server requests
@@ -115,7 +135,7 @@ void loop() {
     Serial.println("Car stopped via Web Server");
     return;
   }
-  
+
   // Check the ground condition
   groundSensor();
 
@@ -135,27 +155,15 @@ void loop() {
   }
 
   // Check the state of the first sensor
-  switch (infraredState) {
-    case LOW:
-      driveForward();
-      // Check the state of the second sensor only if the first sensor is HIGH
-      switch (infraredState2) {
-        case LOW:
-          driveForward();  // Both sensors HIGH - drive forward
-          Serial.println("Both sensors HIGH - Driving Forward");
-          break;
-        case HIGH:
-          turnLeft();  // First sensor HIGH, second sensor LOW - turn left
-          Serial.println("First sensor HIGH, second sensor LOW - Turning Left");
-          break;
-      }
-      break;
-    case HIGH:
-      turnRight();  // First sensor LOW - turn right
-      Serial.println("First sensor LOW - Turning Right");
-      Serial.print(infraredState);
-      Serial.print(infraredState2);
-      break;
+  if (infraredState == LOW && infraredState2 == LOW) {
+    driveForward();
+    Serial.println("Both sensors HIGH - Driving Forward");
+  } else if (infraredState == LOW && infraredState2 == HIGH) {
+    turnLeft();
+    Serial.println("First sensor HIGH, second sensor LOW - Turning Left");
+  } else {
+    turnRight();
+    Serial.println("First sensor LOW - Turning Right");
   }
 
   // Ground senor
@@ -189,6 +197,7 @@ void handleRoot() {
       <body>
         <h1>Car Control</h1>
         <button onclick="fetch('/stop')">Stop Car</button>
+        <button onclick="fetch('/resume')">Resume Car</button>
       </body>
     </html>
   )rawliteral");
@@ -197,17 +206,6 @@ void handleRoot() {
 void handleStopCar() {
   stopCar = true;
   server.send(200, "text/plain", "Car Stopped");
-}
-
-// Sets motor speeds using ESP32 PWM
-void setMotorSpeed(int motor_speed) {
-  ledcSetup(0, 5000, 8);  // Channel 0, frequency 5kHz, 8-bit resolution
-  ledcAttachPin(ENABLE_A1, 0);
-  ledcWrite(0, motor_speed);
-
-  ledcSetup(1, 5000, 8);  // Channel 1, frequency 5kHz, 8-bit resolution
-  ledcAttachPin(ENABLE_A2, 1);
-  ledcWrite(1, motor_speed);
 }
 
 // Drives forward
@@ -246,8 +244,8 @@ void turnLeft() {
 
 // Sets motor speeds
 void setMotorSpeed(int motor_speed) {
-  analogWrite(ENABLE_A1, motor_speed);
-  analogWrite(ENABLE_A2, motor_speed);
+  ledcWrite(ENABLE_A1, motor_speed);
+  ledcWrite(ENABLE_A2, motor_speed);
 }
 
 // Turns all motors off
@@ -272,7 +270,11 @@ void groundSensor() {
   digitalWrite(TRIG1, HIGH);
   delayMicroseconds(5);  // Increased delay for better triggering
   digitalWrite(TRIG1, LOW);
-  PingDurationGround = pulseIn(ECHO1, HIGH);
+  PingDurationGround = pulseIn(ECHO1, HIGH, 30000); // 30ms timeout
+  if (PingDurationGround == 0) {
+  Serial.println("Ground sensor timeout");
+  return;
+}
   ground = PingDurationGround * 0.0344 / 2;
 }
 
