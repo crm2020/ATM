@@ -33,8 +33,8 @@
 #define REED 21
 
 /* Put your SSID & Password */
-const char* ssid = "tesla iot";  // Enter SSID here
-const char* password = "fsL6HgjN";  //Enter Password here
+const char* ssid = "Internet!!";  // Enter SSID here
+const char* password = "123456789";  //Enter Password here
 
 /* Put IP Address details */
 IPAddress local_ip(192,168,1,1);
@@ -99,15 +99,23 @@ void setup() {
 }
 
 // varibles ping sensor ground
-long duration;
+long PingDurationGround;
 int ground;
 
 // caribles ping sensor front
-long time;
+long PingDurationFront;
 int front; 
 
 
 void loop() {
+  server.handleClient(); // Handle web server requests
+
+  if (stopCar) {
+    turnMotorOff();
+    Serial.println("Car stopped via Web Server");
+    return;
+  }
+  
   // Check the ground condition
   groundSensor();
 
@@ -170,8 +178,40 @@ void loop() {
   
 }
 
+// Web Server Handlers
+void handleRoot() {
+  server.send(200, "text/html", R"rawliteral(
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Car Control</title>
+      </head>
+      <body>
+        <h1>Car Control</h1>
+        <button onclick="fetch('/stop')">Stop Car</button>
+      </body>
+    </html>
+  )rawliteral");
+}
+
+void handleStopCar() {
+  stopCar = true;
+  server.send(200, "text/plain", "Car Stopped");
+}
+
+// Sets motor speeds using ESP32 PWM
+void setMotorSpeed(int motor_speed) {
+  ledcSetup(0, 5000, 8);  // Channel 0, frequency 5kHz, 8-bit resolution
+  ledcAttachPin(ENABLE_A1, 0);
+  ledcWrite(0, motor_speed);
+
+  ledcSetup(1, 5000, 8);  // Channel 1, frequency 5kHz, 8-bit resolution
+  ledcAttachPin(ENABLE_A2, 1);
+  ledcWrite(1, motor_speed);
+}
+
 // Drives forward
-void driveForward() {
+void driveBackward() {
   digitalWrite(A1_PIN_ONE, LOW);
   digitalWrite(A1_PIN_TWO, HIGH);
   digitalWrite(A2_PIN_ONE, HIGH);
@@ -179,7 +219,7 @@ void driveForward() {
 }
 
 // Drives backward
-void driveBackward() {
+void driveForward() {
   digitalWrite(A1_PIN_ONE, HIGH);
   digitalWrite(A1_PIN_TWO, LOW);
   digitalWrite(A2_PIN_ONE, LOW);
@@ -232,8 +272,8 @@ void groundSensor() {
   digitalWrite(TRIG1, HIGH);
   delayMicroseconds(5);  // Increased delay for better triggering
   digitalWrite(TRIG1, LOW);
-  duration = pulseIn(ECHO1, HIGH);
-  ground = duration * 0.0344 / 2;
+  PingDurationGround = pulseIn(ECHO1, HIGH);
+  ground = PingDurationGround * 0.0344 / 2;
 }
 
 void frontSensor() {
@@ -242,6 +282,6 @@ void frontSensor() {
   digitalWrite(TRIG2, HIGH);
   delayMicroseconds(5);  // Increased delay for better triggering
   digitalWrite(TRIG2, LOW);
-  time = pulseIn(ECHO2, HIGH);
-  front = time * 0.0344 / 2;
+  PingDurationFront = pulseIn(ECHO2, HIGH);
+  front = PingDurationFront * 0.0344 / 2;
 }
