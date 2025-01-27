@@ -1,175 +1,254 @@
-// Header file
 #include <WiFi.h>
 #include <WebServer.h>
 
+// WiFi Credentials
+const char* ssid = "Ché's S24 Ultra";
+const char* password = "Niggers123456789";
+
+// Create a WebServer object
+WebServer server(80);
+
 // A1 MOTOR
-#define ENABLE_A1 17
-#define A1_PIN_ONE 16
-#define A1_PIN_TWO 4
+#define ENABLE_A1 22
+#define A1_PIN_ONE 15
+#define A1_PIN_TWO 2
 
 // A2 MOTOR
-#define ENABLE_A2 32
-#define A2_PIN_ONE 33
-#define A2_PIN_TWO 25
+#define ENABLE_A2 17
+#define A2_PIN_ONE 16
+#define A2_PIN_TWO 4
 
 // DEFAULT MOTOR SPEED
 #define DEFAULT_SPEED 255
 
-// IR SENSORS
-#define IR_SENSOR_LEFT 13
-#define IR_SENSOR_RIGHT 14
+// IR SENSOR LEFT
+#define IR_SENSOR 35
 
-// ULTRASONIC SENSORS
-#define TRIG_GROUND 26
-#define ECHO_GROUND 27
-#define TRIG_FRONT 22
-#define ECHO_FRONT 23
+// IR SENSOR RIGHT
+#define IR_SENSOR2 34
+
+// PING SENSOR GROUND
+#define TRIG1 33
+#define ECHO1 32
+
+// PING SENSOR FRONT
+#define TRIG2 26
+#define ECHO2 27
 
 // REED SENSOR
-#define REED_SENSOR 21
+#define REED 14
 
-/* Wi-Fi Credentials */
-const char* ssid = "Internet!!";  // Enter SSID here
-const char* password = "123456789";  // Enter Password here
+// MOTOR CONTAINER MOVER UP-DOWN
+#define ENABLE_CM 22
+#define CM_PIN_ONE 23
+#define CM_PIN_TWO 21
 
-/* Static IP Configuration */
-IPAddress local_ip(192, 168, 1, 1);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
+// MOTOR CONTAINER TIGHTEN-LOOSEN
+#define ENABLE_CT 5
+#define CT_PIN_ONE 18
+#define CT_PIN_TWO 19
 
-WebServer server(80);
-bool stopCar = false;
+// varibles ping sensor ground
+long Gduration;
+int ground;
 
-// Variables for sensor distances
-int groundDistance = 0;
-int frontDistance = 0;
+// caribles ping sensor front
+long Fduration;
+int front; 
 
-/* MOTOR LAYOUT
+String motorStatus = "Stopped";
+
+// Function Prototypes
+void driveForward();
+void driveBackward();
+void turnLeft();
+void turnRight();
+void turnMotorOff();
+void setMotorSpeed(int motor_speed);
+void groundSensor();
+void frontSensor();
+
+/* 
+MOTOR LAYOUT
 LEFT <--> RIGHT
 
     A1 --- A2
         |
         |
-        W
+    A3 --- A4    
 */
-
 void setup() {
-  // Serial Monitor
+  // Serial monitor
   Serial.begin(9600);
 
-  // Initialize motor pins
+  // Initialize WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+  Serial.print("IP Address: ");     //http://192.168.88.183/ esp32 ip
+  Serial.println(WiFi.localIP());
+
+  // Define WebServer routes
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html", R"rawliteral(
+//     <!DOCTYPE html>
+//     <html>
+//       <head>
+//         <title>Car Control</title>
+//       </head>
+//       <body>
+//         <h1>Car Control</h1>
+//         <button onclick="fetch('/control?action=stop')">Stop Car</button>
+//         <button onclick="fetch('/control?action=start')">Resume Car</button>
+//         <button onclick="fetch('/control?action=left')">Turn Car Left</button>
+//         <button onclick="fetch('/control?action=right')">Turn Car Right</button>
+//       </body>
+//     </html>
+//   )rawliteral");
+  });
+
+
+// http://<ESP32_IP>/control?action=
+  // // Web Server Handlers
+// void handleRoot() {
+//   server.send(200, "text/html", R"rawliteral(
+//     <!DOCTYPE html>
+//     <html>
+//       <head>
+//         <title>Car Control</title>
+//       </head>
+//       <body>
+//         <h1>Car Control</h1>
+//         <button onclick="fetch('/stop')">Stop Car</button>
+//         <button onclick="fetch('/resume')">Resume Car</button>
+//       </body>
+//     </html>
+//   )rawliteral");
+// }
+
+  server.on("/control", HTTP_GET, []() {
+    if (server.hasArg("action")) {
+      String action = server.arg("action");
+      if (action == "start") {
+        driveForward();
+        motorStatus = "Driving Forward";
+      } else if (action == "stop") {
+        turnMotorOff();
+        motorStatus = "Stopped";
+      } else if (action == "left") {
+        turnLeft();
+        motorStatus = "Turning Left";
+      } else if (action == "right") {
+        turnRight();
+        motorStatus = "Turning Right";
+      } else {
+        motorStatus = "Unknown Command";
+      }
+      server.send(200, "text/plain", "Action: " + action + " | Status: " + motorStatus);
+    } else {
+      server.send(400, "text/plain", "No action specified.");
+    }
+  });
+
+  // Start the server
+  server.begin();
+
+  // Left DC motor
   pinMode(ENABLE_A1, OUTPUT);
   pinMode(A1_PIN_ONE, OUTPUT);
   pinMode(A1_PIN_TWO, OUTPUT);
 
+  // Right DC motor
   pinMode(ENABLE_A2, OUTPUT);
   pinMode(A2_PIN_ONE, OUTPUT);
   pinMode(A2_PIN_TWO, OUTPUT);
 
-  // Initialize sensor pins
-  pinMode(IR_SENSOR_LEFT, INPUT);
-  pinMode(IR_SENSOR_RIGHT, INPUT);
+  // IR Sensor
+  pinMode(IR_SENSOR, INPUT);
 
-  pinMode(TRIG_GROUND, OUTPUT);
-  pinMode(ECHO_GROUND, INPUT);
-  pinMode(TRIG_FRONT, OUTPUT);
-  pinMode(ECHO_FRONT, INPUT);
+  // IR Sensor
+  pinMode(IR_SENSOR2, INPUT);
 
-  pinMode(REED_SENSOR, INPUT);
+  // Set motor to LOW
+  digitalWrite(A1_PIN_ONE, LOW);
+  digitalWrite(A1_PIN_TWO, LOW);
+  digitalWrite(A2_PIN_ONE, LOW);
+  digitalWrite(A2_PIN_TWO, LOW);
 
-  // Initialize motor speed (ensure PWM setup is configured correctly)
-  ledcSetup(0, 5000, 8); // Channel 0, 5kHz frequency, 8-bit resolution
-  ledcAttachPin(ENABLE_A1, 0);
-  ledcAttachPin(ENABLE_A2, 0);
+  // Set motor speed
   setMotorSpeed(DEFAULT_SPEED);
 
-  // Connect to Wi-Fi
-  int retryCount = 0;
-  while (!WiFi.softAP(ssid, password) && retryCount < 5) {
-    Serial.println("Retrying Wi-Fi setup...");
-    delay(1000);
-    retryCount++;
-  }
-  if (retryCount == 5) {
-    Serial.println("Wi-Fi setup failed. Restarting...");
-    ESP.restart();
-  }
+  // ping sensor 1 ground
+  pinMode(TRIG1, OUTPUT);
+  pinMode(ECHO1, INPUT);
 
-  // Web Server Setup
-  server.on("/", handleRoot);
-  server.on("/stop", handleStopCar);
-  server.on("/resume", handleResumeCar);
-  server.begin();
-  Serial.println("HTTP server started");
+  // ping sensor 2 front 
+  pinMode(TRIG2, OUTPUT);
+  pinMode(ECHO2, INPUT);
+
+  // Reed sensor
+  pinMode(REED, INPUT);git
 }
 
 void loop() {
+  // Handle incoming web requests
   server.handleClient();
 
-  if (stopCar) {
-    turnMotorOff();
-    Serial.println("Car stopped via Web Server");
-    return;
-  }
+  // int infraredState = digitalRead(IR_SENSOR);
+  // int infraredState2 = digitalRead(IR_SENSOR2);
+  // int reedState = digitalRead(REED);
 
-  // Handle sensors and motor movement
-  groundDistance = measureDistance(TRIG_GROUND, ECHO_GROUND);
-  frontDistance = measureDistance(TRIG_FRONT, ECHO_FRONT);
+  // // Check the state of the first sensor
+  // switch (infraredState) {
+  //   case HIGH:
+  //     // Check the state of the second sensor only if the first sensor is HIGH
+  //     switch (infraredState2) {
+  //       case HIGH:
+  //         switch (reedState) {
+  //           case HIGH:
+  //             Serial.println("no magnet detected");
+  //           break;
+  //           case LOW:
+  //             turnMotorOff();
+  //             Serial.println("magnet detected");
+  //         }
+  //         driveForward();  // Both sensors HIGH - drive forward
+  //         Serial.println("Both sensors HIGH - Driving Forward");
+  //         break;
+  //       case LOW:
+  //         turnLeft();  // First sensor HIGH, second sensor LOW - turn left
+  //         Serial.println("First sensor HIGH, second sensor LOW - Turning Left");
+  //         break;
+  //     }
+  //   break;
+  //   case LOW:
+  //     turnRight();  // First sensor LOW - turn right
+  //     Serial.println("First sensor LOW - Turning Right");
+  //     break;
+  // }
 
-  int leftIR = digitalRead(IR_SENSOR_LEFT);
-  int rightIR = digitalRead(IR_SENSOR_RIGHT);
-  int reedState = digitalRead(REED_SENSOR);
+  // groundSensor();
+  // if(ground >= 5) {
+  //   driveBackward();
+  //   Serial.println(" - going back");
+  // } else {
+  //   Serial.println("Ground detected");
+  // }
 
-  // Reed Sensor Handling
-  if (reedState == HIGH) {
-    turnMotorOff();
-    Serial.println("Magnet detected - Stopping the car");
-    return;
-  }
+  // frontSensor();
+  // if(front <= 10){
+  //   turnLeft();
+  //   Serial.println(" - Turning Left");
+  // } else {
+  //   Serial.println("No obect detected");
+  // }
 
-  // Infrared Sensors Handling
-  if (leftIR == LOW && rightIR == LOW) {
-    driveForward();
-    Serial.println("Driving Forward");
-  } else if (leftIR == LOW && rightIR == HIGH) {
-    turnLeft();
-    Serial.println("Turning Left");
-  } else if (leftIR == HIGH && rightIR == LOW) {
-    turnRight();
-    Serial.println("Turning Right");
-  }
-
-  // Ground Sensor Handling
-  if (groundDistance >= 8) {
-    driveBackward();
-    Serial.println("Obstacle below - Driving Backward");
-  }
-
-  // Front Sensor Handling
-  if (frontDistance <= 10 && frontDistance > 0) {
-    turnLeft();
-    Serial.println("Obstacle ahead - Turning Left");
-  }
 }
 
-// Measure distance using ultrasonic sensors
-int measureDistance(int trigPin, int echoPin) {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-
-  long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
-  if (duration == 0) {
-    Serial.println("Sensor timeout");
-    return -1;
-  }
-
-  return duration * 0.0344 / 2; // Convert to cm
-}
-
-// Motor Control Functions
+// Drives forward
 void driveForward() {
   digitalWrite(A1_PIN_ONE, HIGH);
   digitalWrite(A1_PIN_TWO, LOW);
@@ -177,13 +256,17 @@ void driveForward() {
   digitalWrite(A2_PIN_TWO, HIGH);
 }
 
+// Drives backward
 void driveBackward() {
   digitalWrite(A1_PIN_ONE, LOW);
-  digitalWrite(A1_PIN_TWO, HIGH);
+  digitalWrite(A1_PIN_TWO, LOW);
   digitalWrite(A2_PIN_ONE, HIGH);
   digitalWrite(A2_PIN_TWO, LOW);
+  Serial. println("backwards");
 }
 
+
+// Makes a left turn
 void turnLeft() {
   digitalWrite(A1_PIN_ONE, HIGH);
   digitalWrite(A1_PIN_TWO, LOW);
@@ -191,6 +274,7 @@ void turnLeft() {
   digitalWrite(A2_PIN_TWO, LOW);
 }
 
+// Makes a right turn
 void turnRight() {
   digitalWrite(A1_PIN_ONE, LOW);
   digitalWrite(A1_PIN_TWO, HIGH);
@@ -198,40 +282,44 @@ void turnRight() {
   digitalWrite(A2_PIN_TWO, HIGH);
 }
 
+// Sets motor speeds
+void setMotorSpeed(int motor_speed) {
+  analogWrite(ENABLE_A1, motor_speed);
+  analogWrite(ENABLE_A2, motor_speed);
+}
+
+// Turns all motors off
 void turnMotorOff() {
   digitalWrite(A1_PIN_ONE, LOW);
   digitalWrite(A1_PIN_TWO, LOW);
   digitalWrite(A2_PIN_ONE, LOW);
-  digitalWrite(A2_PIN_TWO, LOW);
+  digitalWrite(A1_PIN_TWO, LOW);
 }
 
-void setMotorSpeed(int motorSpeed) {
-  ledcWrite(0, motorSpeed);
+// Turns all motors on
+void turnMotorOn() {
+  digitalWrite(A1_PIN_ONE, HIGH);
+  digitalWrite(A1_PIN_TWO, HIGH);
+  digitalWrite(A2_PIN_ONE, HIGH);
+  digitalWrite(A2_PIN_TWO, HIGH);
 }
 
-// Web Server Handlers
-void handleRoot() {
-  server.send(200, "text/html", R"rawliteral(
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Car Control</title>
-      </head>
-      <body>
-        <h1>Car Control</h1>
-        <button onclick="fetch('/stop')">Stop Car</button>
-        <button onclick="fetch('/resume')">Resume Car</button>
-      </body>
-    </html>
-  )rawliteral");
+void groundSensor() {
+  digitalWrite(TRIG1, LOW);
+  delayMicroseconds(2);  // Reduced delay
+  digitalWrite(TRIG1, HIGH);
+  delayMicroseconds(5);  // Increased delay for better triggering
+  digitalWrite(TRIG1, LOW);
+  Gduration = pulseIn(ECHO1, HIGH);
+  ground = Gduration * 0.0344 / 2;
 }
 
-void handleStopCar() {
-  stopCar = true;
-  server.send(200, "text/plain", "Car Stopped");
-}
-
-void handleResumeCar() {
-  stopCar = false;
-  server.send(200, "text/plain", "Car Resumed");
+void frontSensor() {
+  digitalWrite(TRIG2, LOW);
+  delayMicroseconds(2);  // Reduced delay
+  digitalWrite(TRIG2, HIGH);
+  delayMicroseconds(5);  // Increased delay for better triggering
+  digitalWrite(TRIG2, LOW);
+  Fduration = pulseIn(ECHO2, HIGH);
+  front = Fduration * 0.0344 / 2;
 }
